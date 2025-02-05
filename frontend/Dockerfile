@@ -1,16 +1,16 @@
-# First Stage
+# First Stage: Build
 FROM node:latest AS frontend-builder
 
 WORKDIR /app
 
+COPY package*.json  /app
+
+# Install dependencies without running lifecycle scripts
+RUN npm install --upgrade npm
+
 COPY . .
-
-RUN npm install -g npm@latest --legacy-peer-deps
-
-RUN npm install
-
-# Second Stage
-FROM node:alpine 
+# Second Stage: Production
+FROM node:alpine
 
 WORKDIR /app
 
