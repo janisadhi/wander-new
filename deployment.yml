@@ -1,0 +1,225 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wanderlust
+  labels:
+    app: wanderlust
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wanderlust-frontend
+  namespace: wanderlust
+  labels:
+    app: wanderlust
+    role: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wanderlust
+      role: frontend
+  template:
+    metadata:
+      labels:
+        app: wanderlust
+        role: frontend
+    spec:
+       
+      containers:
+      - name: frontend-container
+        image: janisadhi/frontend-wanderlust:v0.0.2
+        ports:
+        - containerPort: 5173
+        env:
+        - name: VITE_API_PATH
+          value: "https://janisadhi.me"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: wanderlust
+spec:
+  selector:
+    role: frontend
+  ports:
+  - protocol: TCP
+    port: 5173
+    targetPort: 5173
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wanderlust-database
+  namespace: wanderlust
+  labels:
+    app: wanderlust
+    role: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wanderlust
+      role: database
+  template:
+    metadata:
+      labels:
+        app: wanderlust
+        role: database
+    spec:
+       
+      containers:
+      - name: database-container
+        image: janisadhi/mongodb-wanderlust:v0.0.2
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-service
+  namespace: wanderlust
+spec:
+  selector:
+    role: database
+  ports:
+  - protocol: TCP
+    port: 27017
+    targetPort: 27017
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wanderlust-backend
+  namespace: wanderlust
+  labels:
+    app: wanderlust
+    role: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wanderlust
+      role: backend
+  template:
+    metadata:
+      labels:
+        app: wanderlust
+        role: backend
+    spec:
+       
+      containers:
+      - name: backend-container
+        image: janisadhi/backend-wanderlust:v0.0.2
+        ports:
+        - containerPort: 5000
+        env:
+        - name: PORT
+          value: "5000"
+        - name: MONGODB_URI
+          value: "mongodb://database-service:27017"
+        - name: FRONTEND_URL
+          value: "https://janisadhi.me"
+        - name: CORS_ORIGIN
+          value: "https://janisadhi.me"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: wanderlust
+spec:
+  selector:
+    role: backend
+  ports:
+  - protocol: TCP
+    port: 5000
+    targetPort: 5000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: wanderlust
+data:
+  nginx.conf: |
+    events {
+      worker_connections 1024;
+    }
+    
+    http {
+      upstream backend {
+        server backend-service.wanderlust.svc.cluster.local:5000;
+      }
+
+      upstream frontend {
+        server frontend-service.wanderlust.svc.cluster.local:5173;
+      }
+
+      server {
+        listen 80;
+        
+        location / {
+          proxy_pass http://frontend;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+
+        location /api/ {
+          proxy_pass http://backend;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-reverse-proxy
+  namespace: wanderlust
+  labels:
+    app: nginx-reverse-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-reverse-proxy
+  template:
+    metadata:
+      labels:
+        app: nginx-reverse-proxy
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: nginx-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+  namespace: wanderlust
+spec:
+  selector:
+    app: nginx-reverse-proxy
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: LoadBalancer
